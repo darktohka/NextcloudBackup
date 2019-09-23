@@ -32,6 +32,7 @@ class NextcloudBackup(object):
         self.warnings = []
         self.queue = Queue()
         self.manifest_changed = 0
+        self.should_update_manifest = False
         self.manifest_lock = threading.Lock()
 
         try:
@@ -74,6 +75,7 @@ class NextcloudBackup(object):
     def manifest_updated(self):
         self.manifest_lock.acquire()
         self.manifest_changed += 1
+        self.should_update_manifest = True
 
         if self.manifest_changed == 5:
             self.manifest.write()
@@ -256,7 +258,7 @@ class NextcloudBackup(object):
         self.queue.join()
         self.send_warnings()
 
-        if self.manifest_changed > 0:
+        if self.should_update_manifest:
             try:
                 self.write_manifest()
                 self.upload_manifest()
