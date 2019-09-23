@@ -27,7 +27,7 @@ class EncryptedSettings(collections.MutableMapping):
     def write(self):
         with open(self.filename, 'wb') as f:
             cipher = self.get_cipher()
-            data = json.dumps(self.store, sort_keys=True, indent=2, separators=(',', ': '))
+            data = json.dumps(self.store)
 
             f.write(cipher.encrypt(pad(data.encode(), cipher.block_size)))
 
