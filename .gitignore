@@ -1,0 +1,6 @@
+*.py[c|o]
+*.json
+nohup.out
+
+encrypted
+decrypted
