@@ -4,13 +4,35 @@ from CompressUtils import compress_file
 from CryptoUtils import derive_key, encrypt_file
 from GDrive import GDrive
 
-import json, requests, os, sys, time, hashlib, shutil, traceback, socket
+from queue import Queue
+import json, requests, os, sys, time, hashlib, shutil, threading, traceback, socket
+
+class WorkerThread(threading.Thread):
+
+    def __init__(self, base):
+        threading.Thread.__init__(self)
+        self.daemon = True
+        self.base = base
+
+    def run(self):
+        while True:
+            filename = self.base.queue.get()
+
+            try:
+                self.base.backup_file(filename)
+            except:
+                self.base.complain_and_exit('Could not upload file {0}!'.format(filename))
+
+            self.base.queue.task_done()
 
 class NextcloudBackup(object):
 
     def __init__(self):
         self.webhook_url = None
         self.warnings = []
+        self.queue = Queue()
+        self.manifest_changed = 0
+        self.manifest_lock = threading.Lock()
 
         try:
             self.read_settings()
@@ -28,20 +50,45 @@ class NextcloudBackup(object):
             self.complain_and_exit('Could not connect to Google Drive!')
 
         try:
-            nextcloud_files = self.get_nextcloud_files()
+            self.nextcloud_files = self.get_nextcloud_files()
         except:
             self.complain_and_exit('Could not contact NextCloud!')
 
-        self.mark_inactive_files(nextcloud_files)
+        self.mark_inactive_files()
         self.encrypted_folder = self.create_encrypted_folder()
 
         try:
-            self.backup_all(nextcloud_files)
+            self.hash_folders = self.drive.list_folders_in(self.backup_folder_id)
         except:
-            self.complain_and_exit('Could not complete backup!')
+            self.complain_and_exit('Could not contact Google Drive for folders!')
 
+        for filename in self.nextcloud_files:
+            self.queue.put(filename)
+
+        self.start_backup_threads()
+
+    def send_warnings(self):
         if self.warnings:
             self.send_webhook('\n'.join(self.warnings))
+
+    def manifest_updated(self):
+        self.manifest_lock.acquire()
+        self.manifest_changed += 1
+
+        if self.manifest_changed == 5:
+            self.manifest.write()
+            self.manifest_changed = 0
+
+        self.manifest_lock.release()
+
+    def write_manifest(self):
+        self.manifest_lock.acquire()
+
+        try:
+            self.manifest.write()
+        finally:
+            self.manifest_changed = 0
+            self.manifest_lock.release()
 
     def warn(self, message):
         self.warnings.append(message)
@@ -65,6 +112,7 @@ class NextcloudBackup(object):
         if self.webhook_url:
             self.send_webhook('{0}\n```{1}```'.format(message, exception), urgent=True)
 
+        self.send_warnings()
         sys.exit()
 
     def read_settings(self):
@@ -95,12 +143,12 @@ class NextcloudBackup(object):
         nextcloud_conn.close()
         return files
 
-    def mark_inactive_files(self, nextcloud_files):
+    def mark_inactive_files(self):
         updatedActive = False
 
         for filename in list(self.manifest['files'].keys()):
             manifest_file = self.manifest['files'][filename]
-            active = filename in nextcloud_files
+            active = filename in self.nextcloud_files
 
             if manifest_file['active'] != active:
                 print('Setting active for {0}: {1}'.format(filename, active))
@@ -133,7 +181,8 @@ class NextcloudBackup(object):
             except:
                 time.sleep(0.1)
 
-    def backup_file(self, hash_folders, filename, file_info):
+    def backup_file(self, filename):
+        file_info = self.nextcloud_files[filename]
         current_version = str(file_info['time'])
 
         if filename in self.manifest['files']:
@@ -158,26 +207,28 @@ class NextcloudBackup(object):
 
         if filename not in self.manifest['files']:
             self.manifest['files'][filename] = {'active': True, 'versions': {}}
+            self.manifest_updated()
 
         version_hash = hashlib.sha384((filename + current_version).encode('utf-8')).hexdigest()
         hash_folder_name = version_hash[:2]
-        hash_folder = self.drive.find_file_in_list(hash_folders, hash_folder_name)
+        hash_folder = self.drive.find_file_in_list(self.hash_folders, hash_folder_name)
 
         if not hash_folder:
             hash_folder = self.drive.create_folder(hash_folder_name, self.backup_folder_id)
-            hash_folders.append(hash_folder)
+            self.hash_folders.append(hash_folder)
 
         current_drive_file = self.drive.search_for_file(version_hash)
 
         if current_drive_file:
             self.warn('Hash {0} already exists for file {1}...'.format(version_hash, filename))
+            self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': current_drive_file[0]['fileSize'], 'hash': version_hash}
+            self.manifest_updated()
             return True
 
         print('Compressing {0}...'.format(filename))
         version_path = os.path.join(self.encrypted_folder, version_hash)
         compressed_path = version_path + '-compressed'
         compress_file(drive_path, compressed_path)
-        compressed_size = os.path.getsize(compressed_path)
 
         print('Encrypting {0}...'.format(filename))
 
@@ -188,28 +239,32 @@ class NextcloudBackup(object):
 
         print('Uploading {0}...'.format(filename))
         self.drive.upload_file(encrypted_path, hash_folder['id'], version_hash)
-        self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': os.path.getsize(encrypted_path), 'compressedSize': compressed_size, 'hash': version_hash}
-        self.manifest.write()
+        self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': os.path.getsize(encrypted_path), 'hash': version_hash}
+        self.manifest_updated()
 
         self.remove_file_discreetly(encrypted_path)
         return True
 
-    def backup_all(self, nextcloud_files):
-        hash_folders = self.drive.list_folders_in(self.backup_folder_id)
-        self.warnings = []
-        updated_any = False
+    def start_backup_threads(self):
+        if self.queue.empty():
+            return
 
-        for filename, file_info in nextcloud_files.items():
-            if self.backup_file(hash_folders, filename, file_info):
-                updated_any = True
+        for i in range(6):
+            thread = WorkerThread(self)
+            thread.start()
 
-        self.manifest.write()
+        self.queue.join()
+        self.send_warnings()
 
-        if updated_any:
-            self.upload_manifest(hash_folders)
+        if self.manifest_changed > 0:
+            try:
+                self.write_manifest()
+                self.upload_manifest()
+            except:
+                self.complain_and_exit('Could not upload manifest!')
 
-    def upload_manifest(self, hash_folders):
-        manifest_folder = self.drive.find_file_in_list(hash_folders, 'manifests')
+    def upload_manifest(self):
+        manifest_folder = self.drive.find_file_in_list(self.hash_folders, 'manifests')
 
         if not manifest_folder:
             manifest_folder = self.drive.create_folder('manifests', self.backup_folder_id)
