@@ -198,8 +198,6 @@ class NextcloudBackup(object):
         if not os.path.isfile(drive_path):
             if not os.path.exists(drive_path):
                 self.warn('File {0} does not exist!'.format(drive_path))
-            else:
-                print('File {0} is a folder.'.format(drive_path))
 
             return False
 
@@ -223,7 +221,7 @@ class NextcloudBackup(object):
 
         if current_drive_file:
             self.warn('Hash {0} already exists for file {1}...'.format(version_hash, filename))
-            self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': current_drive_file[0]['fileSize'], 'hash': version_hash}
+            self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': int(current_drive_file[0]['fileSize']), 'hash': version_hash}
             self.manifest_updated()
             return True
 
