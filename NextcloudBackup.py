@@ -251,7 +251,7 @@ class NextcloudBackup(object):
         if self.queue.empty():
             return
 
-        for i in range(6):
+        for i in range(4):
             thread = WorkerThread(self)
             thread.start()
 
