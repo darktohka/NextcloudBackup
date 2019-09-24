@@ -1,8 +1,8 @@
-from EncryptedSettings import EncryptedSettings
-from NextcloudDB import NextcloudDB
-from CompressUtils import compress_file
-from CryptoUtils import derive_key, encrypt_file
-from GDrive import GDrive
+from .EncryptedSettings import EncryptedSettings
+from .NextcloudDB import NextcloudDB
+from .CompressUtils import compress_file
+from .CryptoUtils import derive_key, encrypt_file
+from .GDrive import GDrive
 
 from queue import Queue
 import json, requests, os, sys, time, hashlib, shutil, threading, traceback, socket

@@ -10,7 +10,7 @@ class GDrive(object):
         self.auth = None
         self.drive = None
         self.team_drive_id = team_drive_id
-    
+
     def connect(self, filename='credentials.json'):
         self.auth = GoogleAuth()
         self.auth.LoadCredentialsFile(filename)
@@ -27,7 +27,7 @@ class GDrive(object):
 
         self.auth.SaveCredentialsFile(filename)
         self.drive = GoogleDrive(self.auth)
-    
+
     def create_folder(self, name, folder_id):
         folder = self.drive.CreateFile({
             'title': name,

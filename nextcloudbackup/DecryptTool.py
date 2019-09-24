@@ -1,7 +1,7 @@
-from EncryptedSettings import EncryptedSettings
-from CompressUtils import decompress_file
-from CryptoUtils import derive_key, decrypt_file
-from GDrive import GDrive
+from .EncryptedSettings import EncryptedSettings
+from .CompressUtils import decompress_file
+from .CryptoUtils import derive_key, decrypt_file
+from .GDrive import GDrive
 
 from queue import Queue
 import json, requests, os, sys, time, hashlib, shutil, threading, traceback

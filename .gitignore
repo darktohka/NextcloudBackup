@@ -1,3 +1,5 @@
+__pycache__
+
 *.py[c|o]
 *.json
 nohup.out

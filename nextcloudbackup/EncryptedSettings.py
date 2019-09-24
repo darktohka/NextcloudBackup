@@ -1,4 +1,4 @@
-from CryptoUtils import derive_key
+from .CryptoUtils import derive_key
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad, unpad
 import collections, json, os
