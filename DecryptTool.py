@@ -3,13 +3,33 @@ from CompressUtils import decompress_file
 from CryptoUtils import derive_key, decrypt_file
 from GDrive import GDrive
 
-import json, requests, os, sys, time, hashlib, shutil, traceback
+from queue import Queue
+import json, requests, os, sys, time, hashlib, shutil, threading, traceback
+
+class WorkerThread(threading.Thread):
+
+    def __init__(self, base, task):
+        threading.Thread.__init__(self)
+        self.daemon = True
+        self.base = base
+
+    def run(self):
+        while True:
+            filename = self.base.queue.get()
+
+            try:
+                self.base.restore_file(filename)
+            except:
+                self.base.complain_and_exit('Could not restore file {0}!'.format(filename))
+
+            self.base.queue.task_done()
 
 class DecryptTool(object):
 
     def __init__(self):
         self.webhook_url = None
         self.warnings = []
+        self.queue = Queue()
 
         try:
             self.read_settings()
@@ -22,19 +42,24 @@ class DecryptTool(object):
             self.complain_and_exit('Could not connect to Google Drive!')
 
         self.decrypted_folder = self.create_decrypted_folder()
+        self.remove_temp_files()
 
         try:
             self.restore_manifest()
         except:
             self.complain_and_exit('Could not restore manifest!')
 
-        try:
-            self.restore_all()
-        except:
-            self.complain_and_exit('Could not complete backup!')
+        for filename in self.manifest['files'].keys():
+            self.queue.put(filename)
 
+        self.restore_all()
+        self.send_warnings()
+
+    def send_warnings(self):
         if self.warnings:
             self.send_webhook('\n'.join(self.warnings))
+
+        self.warnings = []
 
     def warn(self, message):
         self.warnings.append(message)
@@ -58,6 +83,7 @@ class DecryptTool(object):
         if self.webhook_url:
             self.send_webhook('{0}\n```{1}```'.format(message, exception), urgent=True)
 
+        self.send_warnings()
         sys.exit()
 
     def read_settings(self):
@@ -79,6 +105,12 @@ class DecryptTool(object):
             os.makedirs(decrypted_folder)
 
         return decrypted_folder
+
+    def remove_temp_files(self):
+        for root, _, files in os.walk(self.decrypted_folder):
+            for file in files:
+                if file.endswith('_nccom') or file.endswith('_ncenc'):
+                    os.remove(os.path.join(root, file))
 
     def remove_file_discreetly(self, filename):
         while True:
@@ -110,7 +142,9 @@ class DecryptTool(object):
 
         self.manifest = EncryptedSettings(manifest_path, self.settings['manifest_password'])
 
-    def restore_file(self, filename, file_info):
+    def restore_file(self, filename):
+        file_info = self.manifest['files'][filename]
+
         if not file_info['active']:
             print('{0} is inactive, not downloading.'.format(filename))
             return
@@ -147,8 +181,8 @@ class DecryptTool(object):
             os.makedirs(dir)
 
         print('Downloading...')
-        encrypted_path = drive_path + '.enc'
-        compressed_path = drive_path + '.com'
+        encrypted_path = drive_path + '_ncenc'
+        compressed_path = drive_path + '_nccom'
         file.GetContentFile(encrypted_path)
 
         if os.path.getsize(encrypted_path) != version_info['encryptedSize']:
@@ -160,16 +194,16 @@ class DecryptTool(object):
         decrypt_file(key, encrypted_path, compressed_path)
         self.remove_file_discreetly(encrypted_path)
 
-        if os.path.getsize(compressed_path) != version_info['compressedSize']:
-            self.warn('File {0} has unexpected encrypted final size: {1} (expected {2})'.format(filename, os.path.getsize(drive_path), version_info['compressedSize']))
-            return
-
+        print('Decompressing...')
         decompress_file(compressed_path, drive_path)
         self.remove_file_discreetly(compressed_path)
 
     def restore_all(self):
-        for filename, file_info in self.manifest['files'].items():
-            self.restore_file(filename, file_info)
+        for i in range(4):
+            worker = WorkerThread(self)
+            worker.start()
+
+        self.queue.join()
 
 if __name__ == '__main__':
     DecryptTool()
