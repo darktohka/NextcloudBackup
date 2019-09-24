@@ -8,7 +8,7 @@ import json, requests, os, sys, time, hashlib, shutil, threading, traceback
 
 class WorkerThread(threading.Thread):
 
-    def __init__(self, base, task):
+    def __init__(self, base):
         threading.Thread.__init__(self)
         self.daemon = True
         self.base = base
@@ -49,7 +49,7 @@ class DecryptTool(object):
         except:
             self.complain_and_exit('Could not restore manifest!')
 
-        for filename in self.manifest['files'].keys():
+        for filename in sorted(self.manifest['files'].keys()):
             self.queue.put(filename)
 
         self.restore_all()
@@ -163,7 +163,6 @@ class DecryptTool(object):
             return
 
         version_hash = version_info['hash']
-        print('Looking for {0}, version {1}...'.format(filename, latest_version))
 
         file = self.drive.search_for_file(version_hash)
 
@@ -180,23 +179,31 @@ class DecryptTool(object):
         if not os.path.exists(dir):
             os.makedirs(dir)
 
-        print('Downloading...')
+        print('Downloading {0}...'.format(filename))
         encrypted_path = drive_path + '_ncenc'
         compressed_path = drive_path + '_nccom'
         file.GetContentFile(encrypted_path)
 
-        if os.path.getsize(encrypted_path) != version_info['encryptedSize']:
-            self.warn('File {0} has unexpected encrypted size: {1} (expected {2})'.format(filename, os.path.getsize(encrypted_path), version_info['encryptedSize']))
+        encrypted_size = os.path.getsize(encrypted_path)
+        expected_size = int(version_info['encryptedSize'])
+
+        if encrypted_size != expected_size:
+            self.warn('File {0} has unexpected encrypted size: {1} (expected {2})'.format(filename, encrypted_size, expected_size))
             return
 
-        print('Decrypting...')
         key = derive_key(self.file_password + version_hash, 32)
         decrypt_file(key, encrypted_path, compressed_path)
         self.remove_file_discreetly(encrypted_path)
 
-        print('Decompressing...')
         decompress_file(compressed_path, drive_path)
         self.remove_file_discreetly(compressed_path)
+
+        final_size = os.path.getsize(drive_path)
+        expected_final_size = int(version_info['size'])
+
+        if final_size != expected_final_size:
+            self.warn('File {0} has unexpected final size: {1} (expected {2})'.format(filename, final_size, expected_final_size))
+            return
 
     def restore_all(self):
         for i in range(4):
