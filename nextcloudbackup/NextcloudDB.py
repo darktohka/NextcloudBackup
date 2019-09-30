@@ -1,4 +1,6 @@
 from contextlib import closing
+from .CompressUtils import check_patterns
+import fnmatch
 import mysql.connector
 
 class NextcloudDB(object):
@@ -35,12 +37,19 @@ class NextcloudDB(object):
 
         return storage_id[0]
 
-    def get_files(self, connection, storage_id, limit=0):
+    def get_files(self, connection, storage_id, ignore=None, limit=0):
         query = "select path, size, storage_mtime from oc_filecache where storage=%s and mimetype != 2 and mimepart != 1 and path like 'files/%'"
 
         if limit > 0:
             query += ' limit {0}'.format(limit)
 
         files = self.fetch_all(connection, query, (storage_id,))
-        files = {file[0][len('files/'):]: {'size': file[1], 'time': file[2]} for file in files}
-        return files
+        all_files = {}
+
+        for file in files:
+             filename = file[0][len('files/'):]
+
+             if not check_patterns(filename, ignore):
+                 all_files[filename] = {'size': file[1], 'time': file[2]}
+
+        return all_files

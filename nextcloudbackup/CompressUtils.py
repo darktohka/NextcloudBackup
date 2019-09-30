@@ -1,4 +1,15 @@
+import fnmatch
 import zlib
+
+def check_patterns(file, patterns):
+    if not patterns:
+        return False
+
+    for pattern in patterns:
+        if fnmatch.fnmatch(file, pattern):
+            return True
+
+    return False
 
 def compress_file(input_filename, output_filename, chunk_size=64*1024):
     compressor = zlib.compressobj()
