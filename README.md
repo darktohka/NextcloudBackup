@@ -16,17 +16,30 @@ Sample `settings.json` file (necessary to run application):
 
 ```
 {
-    "file_password": "my_custom_pw",
-    "manifest_password": "my_custom_manifest_pw",
-    "nextcloud_username": "darktohka",
-    "nextcloud_folder": "/var/lib/nextcloud/data",
-    "team_drive_id": "0BAo-tx9NqcBaKuP9AV",
-    "backup_folder_id": "1JGkMDe7TWP15oDjXN7W4Ou8EgpqqGa2D",
     "webhook_url": "https://discordapp.com/api/webhooks/513567234170380045/qx6jCH4MbmteWLb_kCqK66FCVXMMG_4kTK8ziL_9NTRzzHbyq622LbD32ejFBaJB8NWx",
-    "mysql_host": "127.0.0.1",
-    "mysql_db": "nextcloud",
-    "mysql_user": "nextcloud",
-    "mysql_password": "my_mysql_pw"
+    "backups": {
+        "first": {
+            "type": "nextcloud",
+            "file_password": "my_custom_pw",
+            "manifest_password": "my_custom_manifest_pw",
+            "nextcloud_username": "darktohka",
+            "nextcloud_folder": "/var/lib/nextcloud/data",
+            "team_drive_id": "0BAo-tx9NqcBaKuP9AV",
+            "backup_folder_id": "1JGkMDe7TWP15oDjXN7W4Ou8EgpqqGa2D",
+            "mysql_host": "127.0.0.1",
+            "mysql_db": "nextcloud",
+            "mysql_user": "nextcloud",
+            "mysql_password": "my_mysql_pw"
+        },
+        "second": {
+            "type": "filesystem",
+            "folder": "/opt/important-files",
+            "file_password": "another_pw",
+            "manifest_password": "another_pw",
+            "team_drive_id": "0BAo-tx9NqcBaKuP9AV",
+            "backup_folder_id": "1JGkMDe7TWP15oDjXN7W4Ou8EdvaeCANT"
+        }
+    }
 }
 ```
 
