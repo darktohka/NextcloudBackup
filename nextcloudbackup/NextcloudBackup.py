@@ -4,7 +4,9 @@ from .CompressUtils import compress_file, check_patterns
 from .CryptoUtils import derive_key, encrypt_file
 from .GDrive import GDrive
 
+from pydrive.files import ApiRequestError
 from queue import Queue
+
 import json, requests, os, sys, time, hashlib, shutil, threading, traceback, socket
 
 class WorkerThread(threading.Thread):
@@ -13,18 +15,30 @@ class WorkerThread(threading.Thread):
         threading.Thread.__init__(self)
         self.daemon = True
         self.base = base
+        self.timeout = 0
 
     def run(self):
         while True:
+            if self.timeout:
+                time.sleep(self.timeout)
+                self.timeout = 0
+
             server_name, filename = self.base.queue.get()
             server = self.base.get_server(server_name)
 
             try:
                 server.backup_file(filename)
+            except ApiRequestError as e:
+                if 'HttpError' in str(e):
+                    self.base.queue.put([server_name, filename])
+                    self.base.signal_api_timeout()
+                    continue
+
+                self.base.complain_and_exit('Could not upload file {0}!'.format(filename))
             except:
                 self.base.complain_and_exit('Could not upload file {0}!'.format(filename))
-
-            self.base.queue.task_done()
+            finally:
+                self.base.queue.task_done()
 
 class ServerBackup(object):
 
@@ -250,6 +264,7 @@ class NextcloudBackup(object):
         self.queue = Queue()
         self.drives = {}
         self.servers = {}
+        self.threads = []
         self.encrypted_folder = self.create_encrypted_folder()
         self.manifest_folder = self.create_manifest_folder()
 
@@ -349,18 +364,32 @@ class NextcloudBackup(object):
                 time.sleep(0.1)
 
     def start_backup_threads(self):
-        if self.queue.empty():
+        if self.queue.empty() or self.threads:
             return
+
+        self.threads = []
 
         for i in range(4):
             thread = WorkerThread(self)
             thread.start()
+            self.threads.append(thread)
 
         self.queue.join()
         self.send_warnings()
 
         for server in self.servers.values():
             server.upload_manifest_if_needed()
+
+    def signal_api_timeout(self):
+        signal = False
+
+        for thread in self.threads:
+            if thread.timeout != 60:
+                thread.timeout = 60
+                signal = True
+
+        if signal:
+            print('API timeout! Waiting for 60 seconds...')
 
 if __name__ == '__main__':
     def get_lock(process_name):
