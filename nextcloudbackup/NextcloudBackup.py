@@ -7,7 +7,7 @@ from .GDrive import GDrive
 from pydrive.files import ApiRequestError
 from queue import Queue
 
-import json, requests, os, sys, time, hashlib, shutil, threading, traceback, socket
+import atexit, json, requests, os, sys, time, hashlib, shutil, threading, traceback, socket
 
 class WorkerThread(threading.Thread):
 
@@ -67,7 +67,7 @@ class ServerBackup(object):
         try:
             self.read_manifest()
         except:
-            self.base.complain_and_exit('Could not read manifest!')
+            self.base.complain_and_exit('Could not read manifest for {0}!'.format(self.name))
 
         try:
             self.drive = self.base.connect_to_google(self.settings['team_drive_id'])
@@ -95,7 +95,7 @@ class ServerBackup(object):
         self.manifest_changed += 1
         self.should_update_manifest = True
 
-        if self.manifest_changed == 5:
+        if self.manifest_changed == 100:
             self.manifest.write()
             self.manifest_changed = 0
 
@@ -176,9 +176,15 @@ class ServerBackup(object):
         current_drive_file = self.drive.search_for_file(version_hash)
 
         if current_drive_file:
+            file_size = int(current_drive_file[0]['fileSize'])
             self.base.warn('Hash {0} already exists for file {1}...'.format(version_hash, filename))
-            self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': int(current_drive_file[0]['fileSize']), 'hash': version_hash}
-            self.manifest_updated()
+
+            if file_size > 0:
+                self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': file_size, 'hash': version_hash}
+                self.manifest_updated()
+            else:
+                self.base.warn('Hash {0} exists for file {1} but has a bad file size.'.format(version_hash, filename))
+
             return True
 
         print('Compressing {0}...'.format(filename))
@@ -369,27 +375,33 @@ class NextcloudBackup(object):
 
         self.threads = []
 
-        for i in range(4):
+        for i in range(5):
             thread = WorkerThread(self)
             thread.start()
             self.threads.append(thread)
 
+        atexit.register(self.write_all_manifests)
         self.queue.join()
         self.send_warnings()
 
         for server in self.servers.values():
             server.upload_manifest_if_needed()
 
+    def write_all_manifests(self):
+        for server in self.servers.values():
+            if server.should_update_manifest:
+                server.write_manifest()
+
     def signal_api_timeout(self):
         signal = False
 
         for thread in self.threads:
-            if thread.timeout != 60:
-                thread.timeout = 60
+            if thread.timeout != 45:
+                thread.timeout = 45
                 signal = True
 
         if signal:
-            print('API timeout! Waiting for 60 seconds...')
+            print('API timeout! Waiting for 45 seconds...')
 
 if __name__ == '__main__':
     def get_lock(process_name):
