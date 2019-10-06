@@ -120,19 +120,16 @@ class ServerBackup(object):
             self.manifest['files'] = {}
 
     def mark_inactive_files(self):
-        updatedActive = False
+        always_active = self.settings.get('always_active')
 
         for filename in list(self.manifest['files'].keys()):
             manifest_file = self.manifest['files'][filename]
-            active = filename in self.all_files
+            active = filename in self.all_files or check_patterns(filename, always_active)
 
             if manifest_file['active'] != active:
                 print('Setting active for {0}: {1}'.format(filename, active))
                 manifest_file['active'] = active
-                updatedActive = True
-
-        if updatedActive:
-            self.write_manifest()
+                self.should_update_manifest = True
 
     def backup_file(self, filename):
         file_info = self.all_files[filename]
@@ -231,7 +228,7 @@ class NextcloudServer(ServerBackup):
         nextcloud_conn = nextcloud.get_connection()
         nextcloud_storage_id = nextcloud.get_storage_id(nextcloud_conn, self.settings['nextcloud_username'])
 
-        files = nextcloud.get_files(nextcloud_conn, nextcloud_storage_id, self.settings.get('ignore', []))
+        files = nextcloud.get_files(nextcloud_conn, nextcloud_storage_id, self.settings.get('ignore'))
         nextcloud_conn.close()
         return files
 
@@ -243,7 +240,7 @@ class FilesystemServer(ServerBackup):
     def get_files(self):
         all_files = {}
         base_folder = self.get_base_folder()
-        ignore = self.settings.get('ignore', [])
+        ignore = self.settings.get('ignore')
 
         for root, _, files in os.walk(base_folder):
             short_root = root[len(base_folder) + 1:]
@@ -370,18 +367,18 @@ class NextcloudBackup(object):
                 time.sleep(0.1)
 
     def start_backup_threads(self):
-        if self.queue.empty() or self.threads:
-            return
-
-        self.threads = []
-
-        for i in range(5):
-            thread = WorkerThread(self)
-            thread.start()
-            self.threads.append(thread)
-
         atexit.register(self.write_all_manifests)
-        self.queue.join()
+
+        if not self.queue.empty():
+            self.threads = []
+
+            for i in range(5):
+                thread = WorkerThread(self)
+                thread.start()
+                self.threads.append(thread)
+
+            self.queue.join()
+
         self.send_warnings()
 
         for server in self.servers.values():
