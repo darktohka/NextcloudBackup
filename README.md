@@ -29,7 +29,8 @@ Sample `settings.json` file (necessary to run application):
             "mysql_host": "127.0.0.1",
             "mysql_db": "nextcloud",
             "mysql_user": "nextcloud",
-            "mysql_password": "my_mysql_pw"
+            "mysql_password": "my_mysql_pw",
+            "always_active": ["logs/*.gz"]
         },
         "second": {
             "type": "filesystem",
@@ -37,7 +38,8 @@ Sample `settings.json` file (necessary to run application):
             "file_password": "another_pw",
             "manifest_password": "another_pw",
             "team_drive_id": "0BAo-tx9NqcBaKuP9AV",
-            "backup_folder_id": "1JGkMDe7TWP15oDjXN7W4Ou8EdvaeCANT"
+            "backup_folder_id": "1JGkMDe7TWP15oDjXN7W4Ou8EdvaeCANT",
+            "ignore": ["*.log"]
         }
     }
 }
@@ -55,5 +57,10 @@ To run the application, simply run:
 
 ```
 python3 -m pip install -r requirements.txt
-python3 -OO NextcloudBackup.py
+python3 -m nextcloudbackup.NextcloudBackup
+```
+It is also possible to run the integrity check tool, which checks for missing file fragments in your Google Drive:
+
+```
+python3 -m nextcloudbackup.NextcloudBackup --integrity
 ```
