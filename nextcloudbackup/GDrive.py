@@ -55,10 +55,7 @@ class GDrive(object):
         return file
 
     def search_files(self, query):
-        try:
-            return self.drive.ListFile({'q': query, 'corpora': 'teamDrive', 'teamDriveId': self.team_drive_id, 'includeTeamDriveItems': 'true', 'supportsTeamDrives': 'true', 'maxResults': 20000}).GetList()
-        except:
-            return []
+        return self.drive.ListFile({'q': query, 'corpora': 'teamDrive', 'teamDriveId': self.team_drive_id, 'includeTeamDriveItems': 'true', 'supportsTeamDrives': 'true', 'maxResults': 20000}).GetList()
 
     def list_folders_in(self, folder_id):
         return self.search_files("'{0}' in parents and trashed=false and mimeType='{1}'".format(folder_id, FOLDER_MIME))

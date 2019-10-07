@@ -1,3 +1,4 @@
+
 from .EncryptedSettings import EncryptedSettings
 from .NextcloudDB import NextcloudDB
 from .CompressUtils import compress_file, check_patterns
@@ -5,11 +6,12 @@ from .CryptoUtils import derive_key, encrypt_file
 from .GDrive import GDrive
 
 from pydrive.files import ApiRequestError
+from googleapiclient.errors import HttpError
 from queue import Queue
 
-import atexit, json, requests, os, sys, time, hashlib, shutil, threading, traceback, socket
+import argparse, atexit, json, requests, os, sys, time, hashlib, shutil, threading, traceback, socket
 
-class WorkerThread(threading.Thread):
+class BackupThread(threading.Thread):
 
     def __init__(self, base):
         threading.Thread.__init__(self)
@@ -28,7 +30,7 @@ class WorkerThread(threading.Thread):
 
             try:
                 server.backup_file(filename)
-            except ApiRequestError as e:
+            except (ApiRequestError, HttpError) as e:
                 if 'HttpError' in str(e):
                     self.base.queue.put([server_name, filename])
                     self.base.signal_api_timeout()
@@ -39,6 +41,45 @@ class WorkerThread(threading.Thread):
                 self.base.complain_and_exit('Could not upload file {0}!'.format(filename))
             finally:
                 self.base.queue.task_done()
+
+class VerifyThread(threading.Thread):
+
+    def __init__(self, base):
+        threading.Thread.__init__(self)
+        self.daemon = True
+        self.base = base
+        self.timeout = 0
+
+    def run(self):
+        while True:
+            if self.timeout:
+                time.sleep(self.timeout)
+                self.timeout = 0
+
+            server_name, folder_name, folder_id = self.base.queue.get()
+            server = self.base.get_server(server_name)
+            files = []
+
+            try:
+                files = server.drive.list_files_in(folder_id)
+            except (ApiRequestError, HttpError) as e:
+                if 'HttpError' in str(e):
+                    self.base.queue.put([server_name, folder_name, folder_id])
+                    self.base.signal_api_timeout()
+                    continue
+
+                self.base.complain_and_exit('Could not list folder {0}!'.format(folder_name))
+            except:
+                self.base.complain_and_exit('Could not list folder {0}!'.format(folder_name))
+            finally:
+                self.base.queue.task_done()
+
+            server.folder_lock.acquire()
+
+            for file in files:
+                server.folders[folder_name][file['title']] = int(file['fileSize'])
+
+            server.folder_lock.release()
 
 class ServerBackup(object):
 
@@ -75,20 +116,32 @@ class ServerBackup(object):
             self.base.complain_and_exit('Could not connect to Google!')
 
         try:
+            self.hash_folders = self.drive.list_folders_in(self.backup_folder_id)
+        except:
+            self.base.complain_and_exit('Could not contact Google Drive for folders!')
+
+    def initialize_files(self):
+        try:
             self.all_files = self.get_files()
         except:
             self.base.complain_and_exit('Could not enumerate file list!')
 
         self.mark_inactive_files()
 
-        try:
-            self.hash_folders = self.drive.list_folders_in(self.backup_folder_id)
-        except:
-            self.base.complain_and_exit('Could not contact Google Drive for folders!')
-
     def queue_all(self):
         for filename in self.all_files:
             self.base.queue.put([self.name, filename])
+
+    def queue_verify_all(self):
+        self.folders = {}
+        self.folder_lock = threading.Lock()
+
+        for folder in self.hash_folders:
+            name = folder['title']
+            self.folders[name] = {}
+
+            if name != 'manifests':
+                self.base.queue.put([self.name, name, folder['id']])
 
     def manifest_updated(self):
         self.manifest_lock.acquire()
@@ -119,16 +172,35 @@ class ServerBackup(object):
         if 'files' not in self.manifest:
             self.manifest['files'] = {}
 
+    def check_integrity(self):
+        for filename, file in self.manifest['files'].items():
+            for version_name, version in file['versions'].items():
+                hash = version['hash']
+                hash_folder = hash[:2]
+
+                if hash_folder not in self.folders:
+                    self.base.warn('Could not find hash folder {0} for file {1} (version {2})!'.format(hash_folder, filename, version_name))
+                    continue
+                if hash not in self.folders[hash_folder]:
+                    self.base.warn('Could not find hash file {0} for file {1} (version {2})!'.format(hash, filename, version_name))
+                    continue
+
+                actual_size = self.folders[hash_folder][hash]
+                expected_size = int(version['encryptedSize'])
+
+                if actual_size != expected_size:
+                    self.base.warn('Hash file {0} for file {1} (version {2}) has unexpected size. Expected {3} bytes, got {4} bytes.'.format(hash, filename, version_name, expected_size, actual_size))
+                    continue
+
     def mark_inactive_files(self):
         always_active = self.settings.get('always_active')
 
-        for filename in list(self.manifest['files'].keys()):
-            manifest_file = self.manifest['files'][filename]
+        for filename, file in self.manifest['files'].items():
             active = filename in self.all_files or check_patterns(filename, always_active)
 
-            if manifest_file['active'] != active:
+            if file['active'] != active:
                 print('Setting active for {0}: {1}'.format(filename, active))
-                manifest_file['active'] = active
+                file['active'] = active
                 self.should_update_manifest = True
 
     def backup_file(self, filename):
@@ -288,9 +360,19 @@ class NextcloudBackup(object):
 
             self.servers[name] = server
             server.initialize()
+
+    def backup_all_servers(self):
+        for server in self.servers.values():
+            server.initialize_files()
             server.queue_all()
 
         self.start_backup_threads()
+
+    def verify_all_servers(self):
+        for server in self.servers.values():
+            server.queue_verify_all()
+
+        self.start_verify_threads()
 
     def get_server(self, name):
         return self.servers.get(name)
@@ -366,23 +448,39 @@ class NextcloudBackup(object):
             except:
                 time.sleep(0.1)
 
+    def create_threads(self, thread_class, count):
+        self.threads = []
+
+        for i in range(count):
+            thread = thread_class(self)
+            thread.start()
+            self.threads.append(thread)
+
     def start_backup_threads(self):
         atexit.register(self.write_all_manifests)
 
         if not self.queue.empty():
-            self.threads = []
-
-            for i in range(5):
-                thread = WorkerThread(self)
-                thread.start()
-                self.threads.append(thread)
-
+            self.create_threads(BackupThread, count=5)
             self.queue.join()
 
         self.send_warnings()
 
         for server in self.servers.values():
             server.upload_manifest_if_needed()
+
+    def start_verify_threads(self):
+        if not self.queue.empty():
+            print('Downloading file list...')
+            self.create_threads(VerifyThread, count=3)
+            self.queue.join()
+
+        print('Verifying integrity...')
+
+        for server in self.servers.values():
+            server.check_integrity()
+
+        print('Integrity verification complete.')
+        self.send_warnings()
 
     def write_all_manifests(self):
         for server in self.servers.values():
@@ -414,5 +512,18 @@ if __name__ == '__main__':
         print('Please run this program as root!')
         sys.exit()
 
-    get_lock('NextcloudBackup')
-    NextcloudBackup()
+    parser = argparse.ArgumentParser(description='Backup Nextcloud to Google Drive.')
+    parser.add_argument('--integrity', '-i', action='store_true')
+    args = parser.parse_args()
+
+    if args.integrity:
+        get_lock('NextcloudBackupIntegrity')
+    else:
+        get_lock('NextcloudBackup')
+
+    base = NextcloudBackup()
+
+    if args.integrity:
+        base.verify_all_servers()
+    else:
+        base.backup_all_servers()
