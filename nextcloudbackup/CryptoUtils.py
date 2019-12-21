@@ -60,12 +60,12 @@ def decrypt_file(input_filename, output_filename, key, chunk_size=64*1024):
 
         header = input.read(header_length)
         header = aes.decrypt(header)
-        header = BytesIO(header)
 
-        timestamp = read_struct(header, '<Q')
-        filename_length = read_struct(header, '<H')
-        filename = header.read(filename_length).decode()
-        original_size = read_struct(header, '<Q')
+        with BytesIO(header) as header:
+            timestamp = read_struct(header, '<Q')
+            filename_length = read_struct(header, '<H')
+            filename = header.read(filename_length).decode()
+            original_size = read_struct(header, '<Q')
 
         with open(output_filename, 'wb') as output:
             while True:
