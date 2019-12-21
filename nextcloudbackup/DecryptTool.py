@@ -192,7 +192,7 @@ class DecryptTool(object):
             return
 
         key = derive_key(self.file_password + version_hash, 32)
-        decrypt_file(key, encrypted_path, compressed_path)
+        decrypt_file(encrypted_path, compressed_path, key)
         self.remove_file_discreetly(encrypted_path)
 
         decompress_file(compressed_path, drive_path)

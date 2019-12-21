@@ -265,11 +265,11 @@ class ServerBackup(object):
 
         encrypted_path = version_path + '-encrypted'
         key = derive_key(self.file_password + version_hash, 32)
-        encrypt_file(key, compressed_path, encrypted_path)
+        encrypt_file(compressed_path, encrypted_path, filename, timestamp=int(current_version), key=key)
         self.base.remove_file_discreetly(compressed_path)
 
         print('Uploading {0}...'.format(filename))
-        self.drive.upload_file(encrypted_path, hash_folder['id'], version_hash)
+        self.drive.upload_file(source_filename=encrypted_path, folder_id=hash_folder['id'], filename=version_hash)
         self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': os.path.getsize(encrypted_path), 'hash': version_hash}
         self.manifest_updated()
 
