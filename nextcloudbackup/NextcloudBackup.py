@@ -4,11 +4,13 @@ from .NextcloudDB import NextcloudDB
 from .CompressUtils import compress_file, check_patterns
 from .CryptoUtils import derive_key, encrypt_file
 from .GDrive import GDrive
+from .OneDrive import OneDrive
 
 from pydrive.files import ApiRequestError
 from googleapiclient.errors import HttpError
 from queue import Queue
 
+import builtins
 import argparse, atexit, json, requests, os, sys, time, hashlib, shutil, threading, traceback, socket
 
 class BackupThread(threading.Thread):
@@ -90,8 +92,8 @@ class ServerBackup(object):
         self.manifest_changed = 0
         self.should_update_manifest = False
         self.manifest_lock = threading.Lock()
+        self.drives = []
 
-        self.backup_folder_id = self.settings['backup_folder_id']
         self.file_password = self.settings['file_password']
         self.base_folder = self.get_base_folder()
 
@@ -110,15 +112,20 @@ class ServerBackup(object):
         except:
             self.base.complain_and_exit('Could not read manifest for {0}!'.format(self.name))
 
-        try:
-            self.drive = self.base.connect_to_google(self.settings['team_drive_id'])
-        except:
-            self.base.complain_and_exit('Could not connect to Google!')
+        for drive in self.settings['drives']:
+            if drive['type'] == 'google':
+                drive = GDrive(drive)
+            elif drive['type'] == 'onedrive':
+                drive = OneDrive(drive)
+            else:
+                raise Exception('Unknown drive type: {0}'.format(drive['type']))
 
-        try:
-            self.hash_folders = self.drive.list_folders_in(self.backup_folder_id)
-        except:
-            self.base.complain_and_exit('Could not contact Google Drive for folders!')
+            try:
+                drive.connect()
+            except:
+                self.base.complain_and_exit('Could not connect to {0}!'.format(drive.get_name()))
+
+            self.drives.append(drive)
 
     def initialize_files(self):
         try:
@@ -235,25 +242,31 @@ class ServerBackup(object):
             self.manifest_updated()
 
         version_hash = hashlib.sha384((filename + current_version).encode('utf-8')).hexdigest()
-        hash_folder_name = version_hash[:2]
-        hash_folder = self.drive.find_file_in_list(self.hash_folders, hash_folder_name)
+        exists = False
 
-        if not hash_folder:
-            hash_folder = self.drive.create_folder(hash_folder_name, self.backup_folder_id)
-            self.hash_folders.append(hash_folder)
+        # TODO: Instead of "exists" variable we should use a different approach...
+        for drive in enumerate(self.drives):
+            hash_folder_name = version_hash[:2]
+            hash_folder = drive.find_file_in_root(hash_folder_name)
 
-        current_drive_file = self.drive.search_for_file(version_hash)
+            if not hash_folder:
+                hash_folder = drive.create_folder_in_root(hash_folder_name)
 
-        if current_drive_file:
-            file_size = int(current_drive_file[0]['fileSize'])
-            self.base.warn('Hash {0} already exists for file {1}...'.format(version_hash, filename))
+            current_drive_file = drive.search_for_file_in(hash_folder['id'], version_hash)
 
-            if file_size > 0:
-                self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': file_size, 'hash': version_hash}
-                self.manifest_updated()
-            else:
-                self.base.warn('Hash {0} exists for file {1} but has a bad file size.'.format(version_hash, filename))
+            if current_drive_file:
+                file_size = int(current_drive_file[0]['fileSize'])
+                self.base.warn('Hash {0} already exists for file {1}...'.format(version_hash, filename))
 
+                if file_size > 0:
+                    self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': file_size, 'hash': version_hash}
+                    self.manifest_updated()
+                else:
+                    self.base.warn('Hash {0} exists for file {1} but has a bad file size.'.format(version_hash, filename))
+
+                exists = True
+
+        if exists:
             return True
 
         print('Compressing {0}...'.format(filename))
@@ -265,13 +278,14 @@ class ServerBackup(object):
 
         encrypted_path = version_path + '-encrypted'
         key = derive_key(self.file_password + version_hash, 32)
-        encrypt_file(compressed_path, encrypted_path, filename, timestamp=int(current_version), key=key)
+        encrypt_file(compressed_path, encrypted_path, filename, timestamp=int(float(current_version)), key=key)
         self.base.remove_file_discreetly(compressed_path)
 
         print('Uploading {0}...'.format(filename))
-        self.drive.upload_file(source_filename=encrypted_path, folder_id=hash_folder['id'], filename=version_hash)
-        self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': os.path.getsize(encrypted_path), 'hash': version_hash}
-        self.manifest_updated()
+        for drive in self.drives:
+            drive.upload_file(source_filename=encrypted_path, folder_id=hash_folder['id'], filename=version_hash)
+            self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': os.path.getsize(encrypted_path), 'hash': version_hash}
+            self.manifest_updated()
 
         self.base.remove_file_discreetly(encrypted_path)
         return True
@@ -280,18 +294,20 @@ class ServerBackup(object):
         if self.should_update_manifest:
             try:
                 self.write_manifest()
-                self.upload_manifest()
+
+                for drive in self.drives:
+                    self.upload_manifest(drive)
             except:
                 self.base.complain_and_exit('Could not upload manifest!')
 
-    def upload_manifest(self):
-        manifest_folder = self.drive.find_file_in_list(self.hash_folders, 'manifests')
+    def upload_manifest(self, drive):
+        manifest_folder = drive.find_file_in_root('manifests')
 
         if not manifest_folder:
-            manifest_folder = self.drive.create_folder('manifests', self.backup_folder_id)
+            manifest_folder = drive.create_folder_in_root('manifests')
 
         print('Uploading manifest...')
-        self.drive.upload_file(self.get_manifest_filename(), manifest_folder['id'], 'manifest-{0}.json'.format(time.strftime('%Y%m%d-%H%M%S')))
+        drive.upload_file(self.get_manifest_filename(), manifest_folder['id'], 'manifest-{0}.json'.format(time.strftime('%Y%m%d-%H%M%S')))
 
 class NextcloudServer(ServerBackup):
 
@@ -337,18 +353,21 @@ class NextcloudBackup(object):
         self.webhook_url = None
         self.warnings = []
         self.queue = Queue()
-        self.drives = {}
         self.servers = {}
         self.threads = []
         self.encrypted_folder = self.create_encrypted_folder()
         self.manifest_folder = self.create_manifest_folder()
 
+    def initialize(self):
         try:
             self.read_settings()
         except:
             self.complain_and_exit('Could not read settings!')
 
         for name, settings in self.settings['backups'].items():
+            if not settings.get('enabled', True):
+                continue
+
             type = settings['type']
 
             if type == 'nextcloud':
@@ -412,14 +431,9 @@ class NextcloudBackup(object):
 
         self.webhook_url = self.settings['webhook_url']
 
-    def connect_to_google(self, team_drive_id):
-        if team_drive_id in self.drives:
-            return self.drives[team_drive_id]
-
-        drive = GDrive(team_drive_id)
-        drive.connect()
-        self.drives[team_drive_id] = drive
-        return drive
+    def write_settings(self):
+        with open('settings.json', 'w') as f:
+            json.dump(self.settings, f, sort_keys=True, indent=2, separators=(',', ': '))
 
     def create_encrypted_folder(self):
         encrypted_folder = os.path.join(os.getcwd(), 'encrypted')
@@ -521,7 +535,8 @@ if __name__ == '__main__':
     else:
         get_lock('NextcloudBackup')
 
-    base = NextcloudBackup()
+    builtins.base = NextcloudBackup()
+    base.initialize()
 
     if args.integrity:
         base.verify_all_servers()
