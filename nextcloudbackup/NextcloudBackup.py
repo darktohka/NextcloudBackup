@@ -245,7 +245,7 @@ class ServerBackup(object):
         exists = False
 
         # TODO: Instead of "exists" variable we should use a different approach...
-        for drive in enumerate(self.drives):
+        for drive in self.drives:
             hash_folder_name = version_hash[:2]
             hash_folder = drive.find_file_in_root(hash_folder_name)
 
