@@ -255,7 +255,7 @@ class ServerBackup(object):
             current_drive_file = drive.search_for_file_in(hash_folder['id'], version_hash)
 
             if current_drive_file:
-                file_size = int(current_drive_file[0]['fileSize'])
+                file_size = drive.get_file_size(current_drive_file)
                 self.base.warn('Hash {0} already exists for file {1}...'.format(version_hash, filename))
 
                 if file_size > 0:

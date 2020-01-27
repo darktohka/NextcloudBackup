@@ -82,7 +82,7 @@ class OneDrive(object):
         return response
 
     def get_item_children(self, item_id):
-        return self.get_api('/me/drive/items/{0}/children?$top=10000&$select=name,id'.format(item_id))['value']
+        return self.get_api('/me/drive/items/{0}/children?$top=10000&$select=name,id,size'.format(item_id))['value']
 
     def create_folder(self, name, folder_id):
         folder = self.post_api('/me/drive/items/{0}/children'.format(folder_id), {'name': name, 'folder': {}})
@@ -97,7 +97,6 @@ class OneDrive(object):
         request = {'item': {'@microsoft.graph.conflictBehavior': 'rename', 'name': filename}}
         upload_url = self.post_api('/me/drive/items/{0}:/{1}:/createUploadSession'.format(folder_id, filename), request)['uploadUrl']
         size = os.path.getsize(source_filename)
-        session = self.get_session()
 
         with open(source_filename, 'rb') as f:
             start_byte = 0
@@ -111,7 +110,7 @@ class OneDrive(object):
 
                 end_byte = start_byte + data_length - 1
                 content_range = 'bytes {0}-{1}/{2}'.format(start_byte, end_byte, size)
-                chunk_response = session.put(upload_url, headers={'Content-Length': str(data_length), 'Content-Range': content_range}, data=file_content)
+                chunk_response = self.get_session().put(upload_url, headers={'Content-Length': str(data_length), 'Content-Range': content_range}, data=file_content)
 
                 if not chunk_response.ok:
                     raise Exception(chunk_response.json())
@@ -141,3 +140,6 @@ class OneDrive(object):
 
     def find_file_in_root(self, filename):
         return self.find_file_in_list(self.root_folders, filename)
+
+    def get_file_size(self, file):
+        return int(file['size'])

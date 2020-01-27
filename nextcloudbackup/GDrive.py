@@ -85,3 +85,6 @@ class GDrive(object):
 
     def find_file_in_root(self, filename):
         return self.find_file_in_list(self.root_folders, filename)
+
+    def get_file_size(self, file):
+        return int(file[0]['fileSize'])
