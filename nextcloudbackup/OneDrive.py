@@ -94,7 +94,7 @@ class OneDrive(object):
         return folder
 
     def upload_file(self, source_filename, folder_id, filename):
-        request = {'item': {'@microsoft.graph.conflictBehavior': 'rename', 'name': filename}}
+        request = {'item': {'@microsoft.graph.conflictBehavior': 'replace', 'name': filename}}
         upload_url = self.post_api('/me/drive/items/{0}:/{1}:/createUploadSession'.format(folder_id, filename), request)['uploadUrl']
         size = os.path.getsize(source_filename)
 
