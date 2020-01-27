@@ -113,8 +113,9 @@ class OneDrive(object):
                 chunk_response = self.get_session().put(upload_url, headers={'Content-Length': str(data_length), 'Content-Range': content_range}, data=file_content)
 
                 if not chunk_response.ok:
-                    raise Exception(chunk_response.json())
+                    raise Exception('Status {0}: {1}'.format(chunk_response.status_code, chunk_response.text))
 
+                self.check_error(chunk_response.json())
                 start_byte = end_byte + 1
 
         return chunk_response
