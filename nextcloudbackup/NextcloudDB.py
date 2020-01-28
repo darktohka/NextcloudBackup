@@ -38,7 +38,7 @@ class NextcloudDB(object):
         return storage_id[0]
 
     def get_files(self, connection, storage_id, ignore=None, limit=0):
-        query = "select path, size, storage_mtime from oc_filecache where storage=%s and mimetype != 2 and mimepart != 1 and path like 'files/%'"
+        query = "select path, storage_mtime from oc_filecache where storage=%s and mimetype != 2 and mimepart != 1 and path like 'files/%'"
 
         if limit > 0:
             query += ' limit {0}'.format(limit)
@@ -47,9 +47,10 @@ class NextcloudDB(object):
         all_files = {}
 
         for file in files:
-             filename = file[0][len('files/'):]
+            filename, time = file
+            filename = filename[len('files/'):]
 
-             if not check_patterns(filename, ignore):
-                 all_files[filename] = {'size': file[1], 'time': file[2]}
+            if not check_patterns(filename, ignore):
+                all_files[filename] = int(time)
 
         return all_files

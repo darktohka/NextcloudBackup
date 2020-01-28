@@ -1,8 +1,8 @@
 
 from .EncryptedSettings import EncryptedSettings
 from .NextcloudDB import NextcloudDB
-from .CompressUtils import compress_file, check_patterns
-from .CryptoUtils import derive_key, encrypt_file
+from .CompressUtils import check_patterns
+from .CryptoUtils import combine_files
 from .GDrive import GDrive
 from .OneDrive import OneDrive
 
@@ -12,6 +12,8 @@ from queue import Queue
 
 import builtins
 import argparse, atexit, json, requests, os, sys, time, hashlib, shutil, threading, traceback, socket
+
+MAX_FILE_SIZE = 512 * 1024 * 1024
 
 class BackupThread(threading.Thread):
 
@@ -27,20 +29,20 @@ class BackupThread(threading.Thread):
                 time.sleep(self.timeout)
                 self.timeout = 0
 
-            server_name, filename = self.base.queue.get()
+            server_name, combined_hash, combined_files = self.base.queue.get()
             server = self.base.get_server(server_name)
 
             try:
-                server.backup_file(filename)
+                server.backup_files(combined_hash, combined_files)
             except (ApiRequestError, HttpError) as e:
                 if 'HttpError' in str(e):
-                    self.base.queue.put([server_name, filename])
+                    self.base.queue.put([server_name, combined_hash, combined_files])
                     self.base.signal_api_timeout()
                     continue
 
-                self.base.complain_and_exit('Could not upload file {0}!'.format(filename))
+                self.base.complain_and_exit('Could not upload files {0}!'.format(combined_files))
             except:
-                self.base.complain_and_exit('Could not upload file {0}!'.format(filename))
+                self.base.complain_and_exit('Could not upload files {0}!'.format(combined_files))
             finally:
                 self.base.queue.task_done()
 
@@ -136,8 +138,43 @@ class ServerBackup(object):
         self.mark_inactive_files()
 
     def queue_all(self):
-        for filename in self.all_files:
-            self.base.queue.put([self.name, filename])
+        filenames = [filename for filename in self.all_files.keys() if not self.is_file_in_manifest(filename)]
+        file_sizes = {filename: os.path.getsize(os.path.join(self.base_folder, filename)) for filename in filenames}
+        sorted_files = sorted(filenames, key=lambda filename: file_sizes[filename])
+        combined_files = {}
+        current_files = {}
+        current_size = 0
+
+        while sorted_files:
+            last = sorted_files[-1]
+            last_size = file_sizes[last]
+
+            if current_size == 0 or (current_size + last_size) <= MAX_FILE_SIZE:
+                current_files[last] = self.all_files[last]
+                current_size += last_size
+                del sorted_files[-1]
+                continue
+
+            first = sorted_files[0]
+            first_size = file_sizes[first]
+
+            if (current_size + first_size) <= MAX_FILE_SIZE:
+                current_files[first] = self.all_files[first]
+                current_size += first_size
+                del sorted_files[0]
+                continue
+
+            hash = hashlib.sha256(str(current_files).encode('utf-8')).hexdigest()
+            combined_files[hash] = current_files
+            current_files = {}
+            current_size = 0
+
+        if current_files:
+            hash = hashlib.sha256(str(current_files).encode('utf-8')).hexdigest()
+            combined_files[hash] = current_files
+
+        for combined_hash, combined_filenames in combined_files.items():
+            self.base.queue.put([self.name, combined_hash, combined_filenames])
 
     def queue_verify_all(self):
         self.folders = {}
@@ -210,84 +247,44 @@ class ServerBackup(object):
                 file['active'] = active
                 self.should_update_manifest = True
 
-    def backup_file(self, filename):
-        file_info = self.all_files[filename]
-        current_version = str(file_info['time'])
-
-        # Check if the file is already in the manifest
+    def is_file_in_manifest(self, filename):
         if filename in self.manifest['files']:
             manifest_file = self.manifest['files'][filename]
+            current_version = str(self.all_files[filename]) # From filestamp
 
             # The file is in the manifest. Do we have the latest version?
-            if 'versions' in manifest_file and current_version in manifest_file['versions']:
-                return False
+            return 'versions' in manifest_file and current_version in manifest_file['versions']
 
-        # We don't have the latest version! Let's upload it.
-        drive_path = os.path.join(self.base_folder, filename)
+        return False
 
-        # The file does not exist!
-        if not os.path.isfile(drive_path):
-            if not os.path.exists(drive_path):
-                self.base.warn('File {0} does not exist!'.format(drive_path))
+    def backup_files(self, combined_hash, filenames):
+        drive_path = os.path.join(self.base.encrypted_folder, combined_hash)
+        filenames = combine_files(filenames, drive_path, self.base_folder, self.base.encrypted_folder, self.file_password)
+        hash_folder_name = combined_hash[:2]
+        combined_size = os.path.getsize(drive_path)
 
-            return False
-
-        if os.path.getsize(drive_path) != file_info['size']:
-            # There is a mismatch between the database and the actual drive.
-            self.base.warn('Size mismatch at {0} between drive ({1}) and database ({2})'.format(drive_path, os.path.getsize(drive_path), file_info['size']))
-            return False
-
-        if filename not in self.manifest['files']:
-            self.manifest['files'][filename] = {'active': True, 'versions': {}}
-            self.manifest_updated()
-
-        version_hash = hashlib.sha384((filename + current_version).encode('utf-8')).hexdigest()
-        exists = False
-
-        # TODO: Instead of "exists" variable we should use a different approach...
         for drive in self.drives:
-            hash_folder_name = version_hash[:2]
             hash_folder = drive.find_file_in_root(hash_folder_name)
 
             if not hash_folder:
                 hash_folder = drive.create_folder_in_root(hash_folder_name)
 
-            current_drive_file = drive.search_for_file_in(hash_folder['id'], version_hash)
+            print('Uploading as {0}:'.format(combined_hash))
+            print(filenames.keys())
 
-            if current_drive_file:
-                file_size = drive.get_file_size(current_drive_file)
-                self.base.warn('Hash {0} already exists for file {1}...'.format(version_hash, filename))
+            drive.upload_file(source_filename=drive_path, folder_id=hash_folder['id'], filename=combined_hash)
 
-                if file_size > 0:
-                    self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': file_size, 'hash': version_hash}
-                    self.manifest_updated()
-                else:
-                    self.base.warn('Hash {0} exists for file {1} but has a bad file size.'.format(version_hash, filename))
+        for filename, timestamp in filenames.items():
+            timestamp = int(timestamp)
 
-                exists = True
+            if filename not in self.manifest['files']:
+                self.manifest['files'][filename] = {'active': True, 'versions': {}}
 
-        if exists:
-            return True
-
-        print('Compressing {0}...'.format(filename))
-        version_path = os.path.join(self.base.encrypted_folder, version_hash)
-        compressed_path = version_path + '-compressed'
-        compress_file(drive_path, compressed_path)
-
-        print('Encrypting {0}...'.format(filename))
-
-        encrypted_path = version_path + '-encrypted'
-        key = derive_key(self.file_password + version_hash, 32)
-        encrypt_file(compressed_path, encrypted_path, filename, timestamp=int(float(current_version)), key=key)
-        self.base.remove_file_discreetly(compressed_path)
-
-        print('Uploading {0}...'.format(filename))
-        for drive in self.drives:
-            drive.upload_file(source_filename=encrypted_path, folder_id=hash_folder['id'], filename=version_hash)
-            self.manifest['files'][filename]['versions'][current_version] = {'size': file_info['size'], 'encryptedSize': os.path.getsize(encrypted_path), 'hash': version_hash}
+            size = os.path.getsize(os.path.join(self.base_folder, filename))
+            self.manifest['files'][filename]['versions'][timestamp] = {'size': size, 'combined_size': combined_size, 'hash': combined_hash}
             self.manifest_updated()
 
-        self.base.remove_file_discreetly(encrypted_path)
+        self.base.remove_file_discreetly(drive_path)
         return True
 
     def upload_manifest_if_needed(self):
@@ -340,7 +337,7 @@ class FilesystemServer(ServerBackup):
                     continue
 
                 filename = os.path.join(root, file)
-                all_files[short_filename] = {'size': os.path.getsize(filename), 'time': os.path.getmtime(filename)}
+                all_files[short_filename] = int(os.path.getmtime(filename))
 
         return all_files
 

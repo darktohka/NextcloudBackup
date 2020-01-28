@@ -138,7 +138,7 @@ class OneDrive(object):
                             print('Error code {0} during resumable upload of {1} ({2})... resuming in 30 seconds.'.format(chunk_response.status_code, source_filename, filename))
                             break
 
-                        if chunk_response.status_code in (200, 201):
+                        if chunk_response.status_code in (200, 201, 202):
                             uploaded_chunk = True
                             break
 
