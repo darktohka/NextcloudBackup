@@ -94,29 +94,62 @@ class OneDrive(object):
         return folder
 
     def upload_file(self, source_filename, folder_id, filename):
+        size = os.path.getsize(source_filename)
+        status_type = 0
+
+        if size < 10485760:
+            with open(source_filename, 'rb') as f:
+                file_content = f.read()
+
+            while status_type != 2:
+                upload = self.get_session().put(API_URL + '/me/drive/items/{0}:/{1}:/content?@microsoft.graph.conflictBehavior=replace'.format(folder_id, filename), data=file_content)
+
+                if upload.status_code in (200, 201):
+                    return upload
+
+                print('Error code {0} during simple upload of {1} ({2})... resuming in 30 seconds.'.format(upload.status_code, source_filename, filename))
+                time.sleep(30)
+                continue
+
         request = {'item': {'@microsoft.graph.conflictBehavior': 'replace', 'name': filename}}
         upload_url = self.post_api('/me/drive/items/{0}:/{1}:/createUploadSession'.format(folder_id, filename), request)['uploadUrl']
-        size = os.path.getsize(source_filename)
+        complete = False
 
-        with open(source_filename, 'rb') as f:
+        while not complete:
             start_byte = 0
 
-            while True:
-                file_content = f.read(10 * 1024 * 1024)
-                data_length = len(file_content)
+            with open(source_filename, 'rb') as f:
+                while True:
+                    file_content = f.read(10 * 1024 * 1024)
+                    data_length = len(file_content)
 
-                if data_length <= 0:
-                    break
+                    if data_length <= 0:
+                        complete = True
+                        break
 
-                end_byte = start_byte + data_length - 1
-                content_range = 'bytes {0}-{1}/{2}'.format(start_byte, end_byte, size)
-                chunk_response = self.get_session().put(upload_url, headers={'Content-Length': str(data_length), 'Content-Range': content_range}, data=file_content)
+                    end_byte = start_byte + data_length - 1
+                    content_range = 'bytes {0}-{1}/{2}'.format(start_byte, end_byte, size)
+                    uploaded_chunk = False
 
-                if not chunk_response.ok:
-                    raise Exception('Status {0}: {1}'.format(chunk_response.status_code, chunk_response.text))
+                    while True:
+                        chunk_response = self.get_session().put(upload_url, headers={'Content-Length': str(data_length), 'Content-Range': content_range}, data=file_content)
 
-                self.check_error(chunk_response.json())
-                start_byte = end_byte + 1
+                        if chunk_response.status_code == 404:
+                            print('Error code {0} during resumable upload of {1} ({2})... resuming in 30 seconds.'.format(chunk_response.status_code, source_filename, filename))
+                            break
+
+                        if chunk_response.status_code in (200, 201):
+                            uploaded_chunk = True
+                            break
+
+                        print('Error code {0} during resumable upload of {1} ({2})... resuming in 2 seconds.'.format(chunk_response.status_code, source_filename, filename))
+                        time.sleep(2)
+
+                    if uploaded_chunk:
+                        start_byte = end_byte + 1
+
+            if not complete:
+                time.sleep(30)
 
         return chunk_response
 
