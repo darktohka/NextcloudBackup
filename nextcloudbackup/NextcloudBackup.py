@@ -138,36 +138,33 @@ class ServerBackup(object):
         self.mark_inactive_files()
 
     def queue_all(self):
-        filenames = [filename for filename in self.all_files.keys() if not self.is_file_in_manifest(filename)]
+        filenames = sorted([filename for filename in self.all_files.keys() if not self.is_file_in_manifest(filename)])
         file_sizes = {filename: os.path.getsize(os.path.join(self.base_folder, filename)) for filename in filenames}
-        sorted_files = sorted(filenames, key=lambda filename: file_sizes[filename])
         combined_files = {}
         current_files = {}
         current_size = 0
 
-        while sorted_files:
-            last = sorted_files[-1]
-            last_size = file_sizes[last]
+        while filenames:
+            filename = filenames.pop(0)
+            current_files[filename] = self.all_files[filename]
+            current_size += file_sizes[filename]
+            added = False
 
-            if current_size == 0 or (current_size + last_size) <= MAX_FILE_SIZE:
-                current_files[last] = self.all_files[last]
-                current_size += last_size
-                del sorted_files[-1]
-                continue
+            for i, filename in enumerate(filenames):
+                size = file_sizes[filename]
 
-            first = sorted_files[0]
-            first_size = file_sizes[first]
+                if (current_size + size) <= MAX_FILE_SIZE:
+                    filename = filenames.pop(i)
+                    current_files[filename] = self.all_files[filename]
+                    current_size += size
+                    added = True
+                    break
 
-            if (current_size + first_size) <= MAX_FILE_SIZE:
-                current_files[first] = self.all_files[first]
-                current_size += first_size
-                del sorted_files[0]
-                continue
-
-            hash = hashlib.sha256(str(current_files).encode('utf-8')).hexdigest()
-            combined_files[hash] = current_files
-            current_files = {}
-            current_size = 0
+            if not added:
+                hash = hashlib.sha256(str(current_files).encode('utf-8')).hexdigest()
+                combined_files[hash] = current_files
+                current_files = {}
+                current_size = 0
 
         if current_files:
             hash = hashlib.sha256(str(current_files).encode('utf-8')).hexdigest()
