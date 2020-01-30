@@ -6,13 +6,13 @@ FOLDER_MIME = 'application/vnd.google-apps.folder'
 
 class GDrive(object):
 
-    def __init__(self, settings):
+    def __init__(self, settings, folder):
         self.settings = settings
+        self.folder_id = folder
         self.auth = None
         self.drive = None
 
         self.team_drive = self.settings['team_drive']
-        self.folder_id = self.settings['folder_id']
 
     def get_name(self):
         return 'Google Drive'

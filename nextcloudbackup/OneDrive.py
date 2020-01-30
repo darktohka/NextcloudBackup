@@ -16,11 +16,11 @@ HEADERS = {
 
 class OneDrive(object):
 
-    def __init__(self, settings):
+    def __init__(self, settings, folder):
         self.settings = settings
+        self.folder_id = folder
         self.session = None
 
-        self.folder_id = self.settings['folder_id']
         self.client_id = self.settings['client_id']
         self.client_secret = self.settings['client_secret']
 

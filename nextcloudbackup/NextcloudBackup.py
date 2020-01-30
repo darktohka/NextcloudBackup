@@ -112,16 +112,18 @@ class ServerBackup(object):
         except:
             self.base.complain_and_exit('Could not read manifest for {0}!'.format(self.name))
 
-        for drive in self.settings['drives']:
+        for drive, folder in self.settings['drives'].items():
+            drive = self.base.get_drive(drive)
+
             if drive['type'] == 'google':
                 from .GDrive import GDrive
-                drive = GDrive(drive)
+                drive = GDrive(drive, folder)
             elif drive['type'] == 'onedrive':
                 from .OneDrive import OneDrive
-                drive = OneDrive(drive)
+                drive = OneDrive(drive, folder)
             elif drive['type'] == 'dropbox':
                 from .Dropbox import Dropbox
-                drive = Dropbox(drive)
+                drive = Dropbox(drive, folder)
             else:
                 raise Exception('Unknown drive type: {0}'.format(drive['type']))
 
@@ -510,6 +512,9 @@ class NextcloudBackup(object):
 
         if signal:
             print('API timeout! Waiting for 45 seconds...')
+
+    def get_drive(self, name):
+        return self.settings['drives'][name]
 
 if __name__ == '__main__':
     def get_lock(process_name):

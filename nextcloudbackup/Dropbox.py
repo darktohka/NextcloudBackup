@@ -2,12 +2,12 @@ import dropbox, traceback, time, os
 
 class Dropbox(object):
 
-    def __init__(self, settings):
+    def __init__(self, settings, folder):
         self.settings = settings
+        self.folder_name = '/' + folder
         self.dropbox = None
 
         self.access_token = self.settings['access_token']
-        self.folder_name = '/' + self.settings['folder_name']
 
     def get_name(self):
         return 'Dropbox'
