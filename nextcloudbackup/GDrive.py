@@ -53,13 +53,13 @@ class GDrive(object):
         self.root_folders.append(folder)
         return folder
 
-    def upload_file(self, source_filename, folder_id, filename):
+    def upload_file(self, source_filename, folder_path, filename):
         file = self.drive.CreateFile({
             'title': filename,
             'parents': [{
                 'kind': 'drive#fileLink',
                 'teamDriveId': self.team_drive,
-                'id': folder_id
+                'id': folder_path
             }]
         })
         file.SetContentFile(source_filename)
@@ -88,3 +88,6 @@ class GDrive(object):
 
     def get_file_size(self, file):
         return int(file[0]['fileSize'])
+
+    def get_folder_path(self, folder):
+        return folder['id']

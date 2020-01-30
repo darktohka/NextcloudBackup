@@ -3,8 +3,6 @@ from .EncryptedSettings import EncryptedSettings
 from .NextcloudDB import NextcloudDB
 from .CompressUtils import check_patterns
 from .CryptoUtils import combine_files
-from .GDrive import GDrive
-from .OneDrive import OneDrive
 
 from pydrive.files import ApiRequestError
 from googleapiclient.errors import HttpError
@@ -116,9 +114,14 @@ class ServerBackup(object):
 
         for drive in self.settings['drives']:
             if drive['type'] == 'google':
+                from .GDrive import GDrive
                 drive = GDrive(drive)
             elif drive['type'] == 'onedrive':
+                from .OneDrive import OneDrive
                 drive = OneDrive(drive)
+            elif drive['type'] == 'dropbox':
+                from .Dropbox import Dropbox
+                drive = Dropbox(drive)
             else:
                 raise Exception('Unknown drive type: {0}'.format(drive['type']))
 
@@ -269,7 +272,7 @@ class ServerBackup(object):
                 hash_folder = drive.create_folder_in_root(hash_folder_name)
 
             print('Uploading {0} ({1} megabytes)...'.format(combined_hash, combined_size / 1024.0 / 1024.0))
-            drive.upload_file(source_filename=drive_path, folder_id=hash_folder['id'], filename=combined_hash)
+            drive.upload_file(source_filename=drive_path, folder_path=drive.get_folder_path(hash_folder), filename=combined_hash)
 
         self.manifest['hashes'][combined_hash] = {'size': combined_size, 'header_size': header_size}
 
@@ -303,7 +306,7 @@ class ServerBackup(object):
             manifest_folder = drive.create_folder_in_root('manifests')
 
         print('Uploading manifest...')
-        drive.upload_file(self.get_manifest_filename(), manifest_folder['id'], 'manifest-{0}.json'.format(time.strftime('%Y%m%d-%H%M%S')))
+        drive.upload_file(self.get_manifest_filename(), drive.get_folder_path(manifest_folder), 'manifest-{0}.json'.format(time.strftime('%Y%m%d-%H%M%S')))
 
 class NextcloudServer(ServerBackup):
 

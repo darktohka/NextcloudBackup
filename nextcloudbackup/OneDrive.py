@@ -105,7 +105,7 @@ class OneDrive(object):
                 traceback.print_exc()
                 time.sleep(3)
 
-    def upload_file(self, source_filename, folder_id, filename):
+    def upload_file(self, source_filename, folder_path, filename):
         upload_url = None
         size = os.path.getsize(source_filename)
         complete = False
@@ -114,7 +114,7 @@ class OneDrive(object):
             start_byte = 0
 
             if not upload_url:
-                upload_url = self.create_upload_session(folder_id, filename)
+                upload_url = self.create_upload_session(folder_path, filename)
 
             with open(source_filename, 'rb') as f:
                 while True:
@@ -176,3 +176,6 @@ class OneDrive(object):
 
     def get_file_size(self, file):
         return int(file['size'])
+
+    def get_folder_path(self, folder):
+        return folder['id']
