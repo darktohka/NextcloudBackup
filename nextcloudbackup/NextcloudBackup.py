@@ -130,6 +130,8 @@ class ServerBackup(object):
             self.drives.append(drive)
 
     def initialize_files(self):
+        print('Reading file list for server {0}...'.format(self.name))
+
         try:
             self.all_files = self.get_files()
         except:
@@ -145,15 +147,12 @@ class ServerBackup(object):
         current_size = 0
 
         while filenames:
-            filename = filenames.pop(0)
-            current_files[filename] = self.all_files[filename]
-            current_size += file_sizes[filename]
             added = False
 
             for i, filename in enumerate(filenames):
                 size = file_sizes[filename]
 
-                if (current_size + size) <= MAX_FILE_SIZE:
+                if current_size == 0 or (current_size + size) <= MAX_FILE_SIZE:
                     filename = filenames.pop(i)
                     current_files[filename] = self.all_files[filename]
                     current_size += size
@@ -213,6 +212,9 @@ class ServerBackup(object):
         if 'files' not in self.manifest:
             self.manifest['files'] = {}
 
+        if 'hashes' not in self.manifest:
+            self.manifest['hashes'] = {}
+
     def check_integrity(self):
         for filename, file in self.manifest['files'].items():
             for version_name, version in file['versions'].items():
@@ -256,7 +258,7 @@ class ServerBackup(object):
 
     def backup_files(self, combined_hash, filenames):
         drive_path = os.path.join(self.base.encrypted_folder, combined_hash)
-        filenames = combine_files(filenames, drive_path, self.base_folder, self.base.encrypted_folder, self.file_password)
+        filenames, header_size = combine_files(filenames, drive_path, self.base_folder, self.base.encrypted_folder, self.file_password)
         hash_folder_name = combined_hash[:2]
         combined_size = os.path.getsize(drive_path)
 
@@ -266,10 +268,10 @@ class ServerBackup(object):
             if not hash_folder:
                 hash_folder = drive.create_folder_in_root(hash_folder_name)
 
-            print('Uploading as {0}:'.format(combined_hash))
-            print(filenames.keys())
-
+            print('Uploading {0} ({1} megabytes)...'.format(combined_hash, combined_size / 1024.0 / 1024.0))
             drive.upload_file(source_filename=drive_path, folder_id=hash_folder['id'], filename=combined_hash)
+
+        self.manifest['hashes'][combined_hash] = {'size': combined_size, 'header_size': header_size}
 
         for filename, timestamp in filenames.items():
             timestamp = int(timestamp)
@@ -278,7 +280,7 @@ class ServerBackup(object):
                 self.manifest['files'][filename] = {'active': True, 'versions': {}}
 
             size = os.path.getsize(os.path.join(self.base_folder, filename))
-            self.manifest['files'][filename]['versions'][timestamp] = {'size': size, 'combined_size': combined_size, 'hash': combined_hash}
+            self.manifest['files'][filename]['versions'][timestamp] = {'size': size, 'hash': combined_hash}
             self.manifest_updated()
 
         self.base.remove_file_discreetly(drive_path)
@@ -468,7 +470,7 @@ class NextcloudBackup(object):
         atexit.register(self.write_all_manifests)
 
         if not self.queue.empty():
-            self.create_threads(BackupThread, count=5)
+            self.create_threads(BackupThread, count=3)
             self.queue.join()
 
         self.send_warnings()

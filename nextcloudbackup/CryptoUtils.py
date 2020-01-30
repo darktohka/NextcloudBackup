@@ -72,13 +72,15 @@ def combine_files(input_filenames, output_filename, base_folder, encrypted_folde
     header = encrypt_chunk(aes, b''.join(file_headers))
 
     with open(output_filename, 'wb') as output:
-        output.write(struct.pack('<B', VERSION))
-        output.write(struct.pack('<B', len(iv)))
-        output.write(struct.pack('<H', len(file_headers)))
-        output.write(struct.pack('<I', len(header)))
-        output.write(iv)
-        output.write(header)
-        output.write(struct.pack('<I', output.tell() + struct.calcsize('<I')))
+        output_header = b''
+        output_header += struct.pack('<B', VERSION)
+        output_header += struct.pack('<B', len(iv))
+        output_header += struct.pack('<H', len(file_headers))
+        output_header += struct.pack('<I', len(header))
+        output_header += iv
+        output_header += header
+        output_header += struct.pack('<I', len(output_header) + struct.calcsize('<I'))
+        output.write(output_header)
 
         with open(files_only, 'rb') as input:
             while True:
@@ -91,7 +93,7 @@ def combine_files(input_filenames, output_filename, base_folder, encrypted_folde
 
         os.remove(files_only)
 
-    return combined_files
+    return combined_files, len(output_header)
 
 def read_headers(input_filename, file_password, chunk_size=64*1024):
     key = derive_key(file_password + os.path.basename(input_filename), 32)

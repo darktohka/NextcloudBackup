@@ -1,5 +1,6 @@
 from requests_oauthlib import OAuth2Session
 import os, time
+import traceback
 
 os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
 os.environ['OAUTHLIB_IGNORE_SCOPE_CHANGE'] = '1'
@@ -93,30 +94,27 @@ class OneDrive(object):
         self.root_folders.append(folder)
         return folder
 
-    def upload_file(self, source_filename, folder_id, filename):
-        size = os.path.getsize(source_filename)
-        status_type = 0
-
-        if size < 10485760:
-            with open(source_filename, 'rb') as f:
-                file_content = f.read()
-
-            while status_type != 2:
-                upload = self.get_session().put(API_URL + '/me/drive/items/{0}:/{1}:/content?@microsoft.graph.conflictBehavior=replace'.format(folder_id, filename), data=file_content)
-
-                if upload.status_code in (200, 201):
-                    return upload
-
-                print('Error code {0} during simple upload of {1} ({2})... resuming in 30 seconds.'.format(upload.status_code, source_filename, filename))
-                time.sleep(30)
-                continue
-
+    def create_upload_session(self, folder_id, filename):
         request = {'item': {'@microsoft.graph.conflictBehavior': 'replace', 'name': filename}}
-        upload_url = self.post_api('/me/drive/items/{0}:/{1}:/createUploadSession'.format(folder_id, filename), request)['uploadUrl']
+
+        while True:
+            try:
+                return self.post_api('/me/drive/items/{0}:/{1}:/createUploadSession'.format(folder_id, filename), request)['uploadUrl']
+            except:
+                print('Could not create upload session, retrying in 3 seconds...')
+                traceback.print_exc()
+                time.sleep(3)
+
+    def upload_file(self, source_filename, folder_id, filename):
+        upload_url = None
+        size = os.path.getsize(source_filename)
         complete = False
 
         while not complete:
             start_byte = 0
+
+            if not upload_url:
+                upload_url = self.create_upload_session(folder_id, filename)
 
             with open(source_filename, 'rb') as f:
                 while True:
@@ -129,27 +127,28 @@ class OneDrive(object):
 
                     end_byte = start_byte + data_length - 1
                     content_range = 'bytes {0}-{1}/{2}'.format(start_byte, end_byte, size)
-                    uploaded_chunk = False
 
-                    while True:
+                    try:
                         chunk_response = self.get_session().put(upload_url, headers={'Content-Length': str(data_length), 'Content-Range': content_range}, data=file_content)
+                        status_code = chunk_response.status_code
+                    except:
+                        chunk_response = None
+                        status_code = -1
 
-                        if chunk_response.status_code == 404:
-                            print('Error code {0} during resumable upload of {1} ({2})... resuming in 30 seconds.'.format(chunk_response.status_code, source_filename, filename))
-                            break
+                    if status_code not in (200, 201, 202):
+                        print('Error code {0} during resumable upload of {1} ({2}) ({3})... resuming in 5 seconds.'.format(status_code, source_filename, filename, content_range)) 
+                        time.sleep(3)
 
-                        if chunk_response.status_code in (200, 201, 202):
-                            uploaded_chunk = True
-                            break
+                        try:
+                            self.get_session().delete(upload_url)
+                        except:
+                            print('Could not delete session {0}...'.format(upload_url))
 
-                        print('Error code {0} during resumable upload of {1} ({2})... resuming in 2 seconds.'.format(chunk_response.status_code, source_filename, filename))
+                        upload_url = None
                         time.sleep(2)
+                        break
 
-                    if uploaded_chunk:
-                        start_byte = end_byte + 1
-
-            if not complete:
-                time.sleep(30)
+                    start_byte = end_byte + 1
 
         return chunk_response
 
