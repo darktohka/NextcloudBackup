@@ -20,6 +20,7 @@ class OneDrive(object):
         self.settings = settings
         self.folder_id = folder
         self.session = None
+        self.last_token = None
 
         self.client_id = self.settings['client_id']
         self.client_secret = self.settings['client_secret']
@@ -32,11 +33,11 @@ class OneDrive(object):
         return OAuth2Session(self.client_id, token=token, scope=token['scope'])
 
     def get_session(self):
-        old_token = self.settings['token']
         token = self.get_token()
 
-        if (not self.session) or old_token != token:
+        if (not self.session) or self.last_token != token:
             self.session = self.create_raw_session()
+            self.last_token = token
         
         return self.session
 
