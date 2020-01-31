@@ -37,11 +37,19 @@ def combine_files(input_filenames, output_filename, base_folder, encrypted_folde
             if not os.path.exists(drive_path):
                 continue
 
+            file_size = os.path.getsize(drive_path)
             version_hash = hashlib.sha256(filename.encode('utf-8')).hexdigest()
             compressed_path = os.path.join(encrypted_folder, version_hash + '-compressed')
 
             compress_file(drive_path, compressed_path)
             compressed_size = os.path.getsize(compressed_path)
+
+            if compressed_size > file_size:
+                # Looks like the compressed file actually takes up more space than the actual file.
+                # Let's remove the compressed file and directly use the actual file.
+                os.remove(compressed_path)
+                compressed_path = drive_path
+                compressed_size = 0
 
             start_position = output.tell()
             faes = AES.new(key, AES.MODE_CBC, iv)
@@ -55,14 +63,16 @@ def combine_files(input_filenames, output_filename, base_folder, encrypted_folde
 
                     output.write(encrypt_chunk(faes, chunk))
 
-            os.remove(compressed_path)
+            # Only remove compressed file if we are actually using compressed files.
+            if compressed_size > 0:
+                os.remove(compressed_path)
 
             end_position = output.tell()
             header = b''
             header += struct.pack('<Q', timestamp)
             header += struct.pack('<H', len(filename))
             header += filename.encode()
-            header += struct.pack('<Q', os.path.getsize(drive_path))
+            header += struct.pack('<Q', file_size)
             header += struct.pack('<Q', compressed_size)
             header += struct.pack('<Q', start_position)
             header += struct.pack('<Q', end_position)
@@ -143,9 +153,18 @@ def decrypt_files(input_filename, files, file_password, encrypted_folder, base_f
             file = all_files[filename]
             file_length = file['end_seek'] - file['start_seek']
             start_seek = file_seek + file['start_seek']
+            compressed = file['compressed'] > 0
 
             version_hash = hashlib.sha256(filename.encode('utf-8')).hexdigest()
-            compressed_path = os.path.join(encrypted_folder, version_hash + '-decompressed')
+            target_path = os.path.join(base_folder, filename)
+
+            if compressed:
+                # The file is compressed, we have to save the compressed version first
+                compressed_path = os.path.join(encrypted_folder, version_hash + '-compressed')
+            else:
+                # The file is not compressed, decrypt directly to target
+                compressed_path = target_path
+
             input.seek(start_seek)
 
             with open(compressed_path, 'wb') as output:
@@ -163,9 +182,17 @@ def decrypt_files(input_filename, files, file_password, encrypted_folder, base_f
                     if file_length <= 0:
                         break
 
-                output.truncate(file['compressed'])
+                # Only truncate to compressed size if the file is actually compressed
+                if compressed:
+                    output.truncate(file['compressed'])
+                else:
+                    output.truncate(file['size'])
 
-            decompress_file(compressed_path, os.path.join(base_folder, filename))
+            if not compressed:
+                # This file is not compressed, we can skip the compression part
+                continue
+
+            decompress_file(compressed_path, target_path)
             os.remove(compressed_path)
 
 def decrypt_file(input_filename, output_filename, key, chunk_size=64*1024):
