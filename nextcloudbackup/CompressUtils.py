@@ -1,5 +1,4 @@
-import fnmatch
-import zlib
+import fnmatch, zlib, io, os
 
 def check_patterns(file, patterns):
     if not patterns:
@@ -26,7 +25,12 @@ def compress_file(input_filename, output_filename, chunk_size=64*1024):
 
             output.write(compressor.flush())
 
-def decompress_file(input_filename, output_filename, chunk_size=64*1024):
+def decompress_file(input_filename, output_filename, chunk_size=64*1024): 
+    directory = os.path.dirname(output_filename)
+
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+
     compressor = zlib.decompressobj()
 
     with open(input_filename, 'rb') as input:
@@ -40,3 +44,16 @@ def decompress_file(input_filename, output_filename, chunk_size=64*1024):
                 output.write(compressor.decompress(chunk))
 
             output.write(compressor.flush())
+
+def get_file_size(file):
+    if isinstance(file, io.IOBase):
+        return file.tell()
+    else:
+        return os.path.getsize(file)
+
+def open_read_file(file):
+    if isinstance(file, io.IOBase):
+        file.seek(0)
+        return file
+    else:
+        return open(file, 'rb')

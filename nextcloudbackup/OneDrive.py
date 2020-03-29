@@ -1,4 +1,5 @@
 from requests_oauthlib import OAuth2Session
+from . import CompressUtils
 import os, time
 import traceback
 
@@ -38,7 +39,7 @@ class OneDrive(object):
         if (not self.session) or self.last_token != token:
             self.session = self.create_raw_session()
             self.last_token = token
-        
+
         return self.session
 
     def get_token(self):
@@ -106,10 +107,14 @@ class OneDrive(object):
                 traceback.print_exc()
                 time.sleep(3)
 
-    def upload_file(self, source_filename, folder_path, filename):
+    def upload_file(self, source_files, folder_path, filename):
         upload_url = None
-        size = os.path.getsize(source_filename)
         complete = False
+        last_file = len(source_files) - 1
+        size = 0
+
+        for source_file in source_files:
+            size += CompressUtils.get_file_size(source_file)
 
         while not complete:
             start_byte = 0
@@ -117,39 +122,48 @@ class OneDrive(object):
             if not upload_url:
                 upload_url = self.create_upload_session(folder_path, filename)
 
-            with open(source_filename, 'rb') as f:
-                while True:
-                    file_content = f.read(10 * 1024 * 1024)
-                    data_length = len(file_content)
+            for i, filename in enumerate(source_files):
+                with CompressUtils.open_read_file(filename) as f:
+                    while True:
+                        file_content = f.read(10 * 1024 * 1024)
+                        data_length = len(file_content)
 
-                    if data_length <= 0:
-                        complete = True
-                        break
+                        if data_length <= 0:
+                            complete = True
+                            break
 
-                    end_byte = start_byte + data_length - 1
-                    content_range = 'bytes {0}-{1}/{2}'.format(start_byte, end_byte, size)
-
-                    try:
-                        chunk_response = self.get_session().put(upload_url, headers={'Content-Length': str(data_length), 'Content-Range': content_range}, data=file_content)
-                        status_code = chunk_response.status_code
-                    except:
-                        chunk_response = None
-                        status_code = -1
-
-                    if status_code not in (200, 201, 202):
-                        print('Error code {0} during resumable upload of {1} ({2}) ({3})... resuming in 5 seconds.'.format(status_code, source_filename, filename, content_range)) 
-                        time.sleep(3)
+                        end_byte = start_byte + data_length - 1
+                        content_range = 'bytes {0}-{1}/{2}'.format(start_byte, end_byte, size)
 
                         try:
-                            self.get_session().delete(upload_url)
+                            chunk_response = self.get_session().put(upload_url, headers={'Content-Length': str(data_length), 'Content-Range': content_range}, data=file_content)
+                            status_code = chunk_response.status_code
                         except:
-                            print('Could not delete session {0}...'.format(upload_url))
+                            chunk_response = None
+                            status_code = -1
 
-                        upload_url = None
-                        time.sleep(2)
-                        break
+                        if status_code not in (200, 201, 202):
+                            print('Error code {0} during resumable upload of {1} ({2}) ({3})... resuming in 5 seconds.'.format(status_code, source_filename, filename, content_range)) 
+                            time.sleep(3)
 
-                    start_byte = end_byte + 1
+                            try:
+                                self.get_session().delete(upload_url)
+                            except:
+                                print('Could not delete session {0}...'.format(upload_url))
+
+                            upload_url = None
+                            time.sleep(2)
+                            break
+
+                        start_byte = end_byte + 1
+
+                if complete:
+                    # We are not complete yet, we still have more files to upload
+                    if last_file != i:
+                        complete = False
+                else:
+                    # Our upload failed. Retry all over again
+                    break
 
         return chunk_response
 

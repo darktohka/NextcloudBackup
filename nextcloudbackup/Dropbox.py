@@ -1,3 +1,4 @@
+from . import CompressUtils
 import dropbox, traceback, time, os
 
 class Dropbox(object):
@@ -58,44 +59,60 @@ class Dropbox(object):
         self.root_folders.append(folder)
         return folder
 
-    def upload_file(self, source_filename, folder_path, filename):
+    def upload_file(self, source_files, folder_path, filename):
         while True:
             try:
-                return self.upload_file_unsafe(source_filename, folder_path, filename)
+                return self.upload_file_unsafe(source_files, folder_path, filename)
             except:
                 print('Exception during Dropbox file upload: {0}, resuming in 5 seconds...'.format(filename))
                 traceback.print_exc()
                 time.sleep(5)
 
-    def upload_file_unsafe(self, source_filename, folder_path, filename):
-        file_size = os.path.getsize(source_filename)
+    def upload_file_unsafe(self, source_files, folder_path, filename):
         chunk_size = 8 * 1024 * 1024
         target_path = os.path.join(folder_path, filename)
+        last_file = len(source_files) - 1
+        commit = dropbox.files.CommitInfo(path=target_path)
+        cursor = None
 
-        with open(source_filename, 'rb') as f:
-            if file_size <= chunk_size:
-                return self.dropbox.files_upload(f.read(), target_path, mute=True)
+        # Upload each file sequentially
+        for i, filename in enumerate(source_files):
+            file_size = CompressUtils.get_file_size(filename)
 
-            upload_session_start_result = self.dropbox.files_upload_session_start(
-                f.read(chunk_size)
-            )
-            cursor = dropbox.files.UploadSessionCursor(
-                session_id=upload_session_start_result.session_id,
-                offset=f.tell()
-            )
-            commit = dropbox.files.CommitInfo(path=target_path)
-
-            while f.tell() < file_size:
-                if (file_size - f.tell()) <= chunk_size:
-                    return self.dropbox.files_upload_session_finish(
-                        f.read(chunk_size), cursor, commit
+            with CompressUtils.open_read_file(filename) as f:
+                # If we don't have a cursor yet, start an upload session
+                if not cursor:
+                    upload_session_start_result = self.dropbox.files_upload_session_start(
+                        f.read(chunk_size)
                     )
-                else:
-                    self.dropbox.files_upload_session_append_v2(
-                        f.read(chunk_size),
-                        cursor
+                    cursor = dropbox.files.UploadSessionCursor(
+                        session_id=upload_session_start_result.session_id,
+                        offset=f.tell()
                     )
-                    cursor.offset = f.tell()
+
+                    # It's possible that the small was so large that
+                    # we don't need to upload any more files
+                    if last_file == i and (file_size - f.tell()) <= chunk_size:
+                        return self.dropbox.files_upload_session_finish(
+                            f.read(chunk_size), cursor, commit
+                        )
+
+                # Upload chunks until we've hit the file size
+                while f.tell() < file_size:
+                    # If we've hit the end of the last file, finish the session
+                    if last_file == i and (file_size - f.tell()) <= chunk_size:
+                        return self.dropbox.files_upload_session_finish(
+                            f.read(chunk_size), cursor, commit
+                        )
+                    else:
+                        # Append chunk to file
+                        data = f.read(chunk_size)
+
+                        self.dropbox.files_upload_session_append_v2(
+                            data,
+                            cursor
+                        )
+                        cursor.offset += len(data)
 
     def list_folders_in(self, path):
         return [metadata for metadata in self.get_folder_children(path).values() if isinstance(metadata, dropbox.files.FolderMetadata)]

@@ -27,9 +27,7 @@ def combine_files(input_filenames, output_filename, base_folder, encrypted_folde
     file_headers = []
     combined_files = {}
 
-    files_only = os.path.join(encrypted_folder, output_basename + '-files')
-
-    with open(files_only, 'wb') as output:
+    with open(output_filename, 'wb') as output:
         for filename, timestamp in input_filenames.items():
             timestamp = int(timestamp)
             drive_path = os.path.join(base_folder, filename)
@@ -80,30 +78,15 @@ def combine_files(input_filenames, output_filename, base_folder, encrypted_folde
             combined_files[filename] = timestamp
 
     header = encrypt_chunk(aes, b''.join(file_headers))
-
-    with open(output_filename, 'wb') as output:
-        output_header = b''
-        output_header += struct.pack('<B', VERSION)
-        output_header += struct.pack('<B', len(iv))
-        output_header += struct.pack('<H', len(file_headers))
-        output_header += struct.pack('<I', len(header))
-        output_header += iv
-        output_header += header
-        output_header += struct.pack('<I', len(output_header) + struct.calcsize('<I'))
-        output.write(output_header)
-
-        with open(files_only, 'rb') as input:
-            while True:
-                chunk = input.read(chunk_size)
-
-                if not chunk:
-                    break
-
-                output.write(chunk)
-
-        os.remove(files_only)
-
-    return combined_files, len(output_header)
+    output_header = BytesIO()
+    output_header.write(struct.pack('<B', VERSION))
+    output_header.write(struct.pack('<B', len(iv)))
+    output_header.write(struct.pack('<H', len(file_headers)))
+    output_header.write(struct.pack('<I', len(header)))
+    output_header.write(iv)
+    output_header.write(header)
+    output_header.write(struct.pack('<I', output_header.tell() + struct.calcsize('<I')))
+    return combined_files, output_header
 
 def read_headers(input_filename, file_password, chunk_size=64*1024):
     key = derive_key(file_password + os.path.basename(input_filename), 32)
@@ -166,6 +149,12 @@ def decrypt_files(input_filename, files, file_password, encrypted_folder, base_f
                 compressed_path = target_path
 
             input.seek(start_seek)
+
+            # Create the directory if necessary
+            directory = os.path.dirname(compressed_path)
+
+            if not os.path.exists(directory):
+                os.makedirs(directory)
 
             with open(compressed_path, 'wb') as output:
                 aes = AES.new(key, AES.MODE_CBC, iv)

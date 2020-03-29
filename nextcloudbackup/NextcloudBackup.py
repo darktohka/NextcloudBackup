@@ -263,9 +263,11 @@ class ServerBackup(object):
 
     def backup_files(self, combined_hash, filenames):
         drive_path = os.path.join(self.base.encrypted_folder, combined_hash)
-        filenames, header_size = combine_files(filenames, drive_path, self.base_folder, self.base.encrypted_folder, self.file_password)
+        print('Combining {0}...'.format(combined_hash))
+        filenames, header = combine_files(filenames, drive_path, self.base_folder, self.base.encrypted_folder, self.file_password)
+        header_size = header.tell()
         hash_folder_name = combined_hash[:2]
-        combined_size = os.path.getsize(drive_path)
+        combined_size = header_size + os.path.getsize(drive_path)
 
         for drive in self.drives:
             hash_folder = drive.find_file_in_root(hash_folder_name)
@@ -274,7 +276,11 @@ class ServerBackup(object):
                 hash_folder = drive.create_folder_in_root(hash_folder_name)
 
             print('Uploading {0} ({1} megabytes)...'.format(combined_hash, combined_size / 1024.0 / 1024.0))
-            drive.upload_file(source_filename=drive_path, folder_path=drive.get_folder_path(hash_folder), filename=combined_hash)
+            drive.upload_file(
+                source_files=[header, drive_path],
+                folder_path=drive.get_folder_path(hash_folder),
+                filename=combined_hash
+            )
 
         self.manifest['hashes'][combined_hash] = {'size': combined_size, 'header_size': header_size}
 
@@ -308,7 +314,11 @@ class ServerBackup(object):
             manifest_folder = drive.create_folder_in_root('manifests')
 
         print('Uploading manifest...')
-        drive.upload_file(self.get_manifest_filename(), drive.get_folder_path(manifest_folder), 'manifest-{0}.json'.format(time.strftime('%Y%m%d-%H%M%S')))
+        drive.upload_file(
+            source_files=[self.get_manifest_filename()],
+            folder_path=drive.get_folder_path(manifest_folder),
+            filename='manifest-{0}.json'.format(time.strftime('%Y%m%d-%H%M%S'))
+        )
 
 class NextcloudServer(ServerBackup):
 
